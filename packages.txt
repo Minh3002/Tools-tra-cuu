@@ -1,7 +1,0 @@
-chromium
-libgbm1
-libnss3
-libatk-bridge2.0-0
-libgtk-3-0
-libasound2
-libx11-xcb1

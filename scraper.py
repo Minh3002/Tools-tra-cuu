@@ -4,68 +4,27 @@ import time
 import pandas as pd
 from datetime import datetime
 from playwright.sync_api import sync_playwright
-try:
-    from playwright_stealth.stealth import Stealth
-    HAS_STEALTH = True
-except Exception:
-    HAS_STEALTH = False
-
 import ddddocr
 
 class BHYTScraper:
     def __init__(self, headless=True, max_retries=3):
         self.headless = headless
         self.max_retries = max_retries
+        # Dùng ddddocr mặc định (beta=False)
         self.ocr = ddddocr.DdddOcr(show_ad=False)
         self.url = "https://baohiemxahoi.gov.vn/tracuu/Pages/tra-cuu-thoi-han-su-dung-the-bhyt.aspx"
 
     def _launch_browser(self, p):
-        """1. CẤU HÌNH BROWSER LAUNCH: Bypass Anti-bot trên Cloud Linux với Chrome User-Agent, Viewport 1920x1080 & xóa navigator.webdriver."""
-        args = [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-infobars",
-            "--window-size=1920,1080",
-            "--ignore-certificate-errors"
-        ]
-        
+        """Khởi tạo trình duyệt Playwright chạy local ổn định."""
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        
-        try:
-            browser = p.chromium.launch(headless=self.headless, channel="chrome", args=args)
-        except Exception:
-            browser = p.chromium.launch(headless=self.headless, args=args)
-            
+        browser = p.chromium.launch(headless=self.headless)
         context = browser.new_context(
             user_agent=user_agent,
-            viewport={"width": 1920, "height": 1080},
+            viewport={"width": 1280, "height": 800},
             locale="vi-VN",
-            timezone_id="Asia/Ho_Chi_Minh",
-            extra_http_headers={
-                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"'
-            }
+            timezone_id="Asia/Ho_Chi_Minh"
         )
-        
-        # Xóa thuộc tính navigator.webdriver chống phát hiện bot
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-        """)
-        
         page = context.new_page()
-        
-        if HAS_STEALTH:
-            try:
-                Stealth().apply_stealth_sync(page)
-            except Exception:
-                pass
-                
         return browser, context, page
 
     def _format_input_data(self, record):
@@ -78,7 +37,7 @@ class BHYTScraper:
         else:
             ma_the = str(ma_the_raw).strip()
 
-        # Chuẩn hóa mã thẻ số
+        # Chuẩn hóa mã thẻ số (giữ nguyên độ dài 10 chữ số)
         if ma_the.isdigit():
             ma_the = ma_the.lstrip('0').zfill(10)
 
@@ -108,7 +67,7 @@ class BHYTScraper:
         return ma_the, ho_ten, ngay_sinh
 
     def _solve_captcha(self, page):
-        """Cắt trực tiếp khung element #imgCaptcha và dùng ddddocr mặc định."""
+        """Cắt ảnh Captcha trực tiếp từ element #imgCaptcha trên trang và dùng ddddocr giải."""
         try:
             captcha_selector = "#imgCaptcha"
             page.wait_for_selector(captcha_selector, state="visible", timeout=10000)
@@ -148,24 +107,12 @@ class BHYTScraper:
                 should_close = True
 
             page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
-
-            # 2. KIỂM TRA RESPONSE & DEBUG: Chờ form #txtMaThe, nếu không thấy chụp ảnh màn hình debug_cloud.png
-            try:
-                page.wait_for_selector("#txtMaThe", state="visible", timeout=15000)
-            except Exception as e:
-                print(f"[DEBUG CLOUD] Không thể tải form tra cứu #txtMaThe: {e}")
-                try:
-                    page.screenshot(path="debug_cloud.png")
-                except Exception:
-                    pass
-                result_info["Trạng Thái"] = "Lỗi kết nối"
-                result_info["Nội Dung Kết Quả"] = "Không thể nạp form tra cứu từ Cổng BHXH (Trang bị chặn hoặc quá tải)."
-                return result_info
+            page.wait_for_selector("#txtMaThe", state="visible", timeout=15000)
 
             captcha_success = False
 
             for attempt in range(1, self.max_retries + 1):
-                # Điền form kèm trigger sự kiện (Press Tab sau khi fill)
+                # Điền form + trigger sự kiện change + Tab để trang nhận đủ input
                 page.fill("#txtMaThe", ma_the)
                 page.locator("#txtMaThe").dispatch_event("change")
                 page.locator("#txtMaThe").focus()
