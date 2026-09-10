@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import random
 import pandas as pd
 from datetime import datetime
 from playwright.sync_api import sync_playwright
@@ -101,6 +102,13 @@ class BHYTScraper:
             captcha_success = False
 
             for attempt in range(1, self.max_retries + 1):
+                # 2. XỬ LÝ LẠI ẢNH CAPTCHA KHI SAI:
+                # Nếu lần thử trước thất bại (attempt > 1), click vào ảnh Captcha để đổi ảnh mới và chờ 1s
+                if attempt > 1:
+                    if page.locator("#imgCaptcha").count() > 0:
+                        page.locator("#imgCaptcha").first.click()
+                    page.wait_for_timeout(1000)
+
                 # Điền form + trigger change event
                 page.fill("#txtMaThe", ma_the)
                 page.locator("#txtMaThe").dispatch_event("change")
@@ -116,9 +124,6 @@ class BHYTScraper:
 
                 captcha_text = self._solve_captcha(page)
                 if not captcha_text:
-                    if page.locator("#imgCaptcha").count() > 0:
-                        page.locator("#imgCaptcha").first.click()
-                    page.wait_for_timeout(1000)
                     continue
 
                 page.fill("#tokenRecaptch", captcha_text)
@@ -133,9 +138,6 @@ class BHYTScraper:
                     err_msg = page.locator("#messeger").first.inner_text().strip()
 
                 if err_msg and any(k in err_msg.lower() for k in ["không hợp lệ", "không đúng", "mã xác"]):
-                    if page.locator("#imgCaptcha").count() > 0:
-                        page.locator("#imgCaptcha").first.click()
-                    page.wait_for_timeout(1000)
                     continue
 
                 if page.locator("#tcContainer").count() > 0:
@@ -150,9 +152,16 @@ class BHYTScraper:
                             result_info["Nội Dung Kết Quả"] = tc_text
                         break
 
+            # 3. RESET SESSION KHI BỊ CHẶN:
+            # Nếu 1 dòng bị thử Captcha quá 3 lần thất bại, reload page để reset session
             if not captcha_success and result_info["Trạng Thái"] == "Lỗi hệ thống":
                 result_info["Trạng Thái"] = "Lỗi Captcha"
                 result_info["Nội Dung Kết Quả"] = f"Không giải đúng Captcha sau {self.max_retries} lần thử."
+                try:
+                    page.reload(timeout=30000)
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                except Exception:
+                    pass
 
         except Exception as e:
             result_info["Trạng Thái"] = "Lỗi kết nối"
@@ -180,6 +189,11 @@ class BHYTScraper:
                 results.append(res)
                 if callback:
                     callback(idx + 1, total, res)
+
+                # 1. THÊM DELAY GIỮA CÁC DÒNG: Tạm dừng ngẫu nhiên từ 2 đến 4 giây
+                if idx < total - 1:
+                    delay_sec = random.uniform(2, 4)
+                    time.sleep(delay_sec)
 
             browser.close()
 
