@@ -1,0 +1,28 @@
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# User data files & Excel outputs
+*.xlsx
+*.xls
+*.csv
+
+# Temporary files & screenshots
+*.png
+*.jpg
+*.jpeg
+*.html
+*.log
+
+# Streamlit settings & IDE
+.streamlit/
+.vscode/
+.idea/
+.DS_Store
