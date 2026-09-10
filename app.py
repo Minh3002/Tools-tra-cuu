@@ -1,26 +1,13 @@
 import streamlit as st
 import pandas as pd
 import time
-import subprocess
-import sys
 from io import BytesIO
 from datetime import datetime
-
-# Tự động kiểm tra và cài đặt Playwright Chromium khi chạy trên Streamlit Cloud / Server
-@st.cache_resource
-def install_playwright_browsers():
-    try:
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-    except Exception as e:
-        print(f"Lỗi tự động cài đặt Playwright Chromium: {e}")
-
-install_playwright_browsers()
-
 from scraper import BHYTScraper
 
 # Page Configuration
 st.set_page_config(
-    page_title="Tra Cứu BHYT Tự Động",
+    page_title="Tra Cứu BHYT Tự Động (Local App)",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -59,30 +46,6 @@ st.markdown("""
         font-weight: 700;
         margin-top: 0.2rem;
     }
-    .badge-success {
-        background-color: #DEF7EC;
-        color: #03543F;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .badge-warning {
-        background-color: #FEF08A;
-        color: #854D0E;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .badge-danger {
-        background-color: #FDE8E8;
-        color: #9B1C1C;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
     .result-box {
         background: #F8FAFC;
         border-left: 4px solid #1E88E5;
@@ -101,30 +64,9 @@ st.markdown("<div class='sub-title'>Hệ thống tự động tra cứu BHYT t�
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/shield.png", width=64)
     st.header("⚙️ Cấu Hình Hệ Thống")
-    max_retries = st.slider("Số lần thử giải Captcha tối đa", min_value=3, max_value=15, value=10)
+    max_retries = st.slider("Số lần thử giải Captcha tối đa", min_value=1, max_value=10, value=3)
     headless_mode = st.checkbox("Chạy ẩn trình duyệt (Headless)", value=True)
     
-    st.divider()
-    st.subheader("🌐 Chia Sẻ Link Public (Ngrok)")
-    enable_ngrok = st.checkbox("Bật tạo Link Public Ngrok", value=False)
-    ngrok_token = st.text_input("Ngrok Authtoken (Tùy chọn)", type="password", help="Nhập Authtoken từ ngrok.com nếu cần")
-    
-    if enable_ngrok:
-        try:
-            from pyngrok import ngrok
-            if ngrok_token.strip():
-                ngrok.set_auth_token(ngrok_token.strip())
-            tunnels = ngrok.get_tunnels()
-            if not tunnels:
-                tunnel = ngrok.connect(8501, "http")
-                public_url = tunnel.public_url
-            else:
-                public_url = tunnels[0].public_url
-            st.success(f"🔗 **Link Public Ngrok:**\n[{public_url}]({public_url})")
-            st.caption("Gửi link trên cho người khác để họ dùng chung khi máy bạn đang bật!")
-        except Exception as e:
-            st.warning(f"Chưa thể bật Ngrok: {e}\n(Vui lòng kiểm tra lại Authtoken hoặc dùng script run_app.py)")
-
     st.divider()
     st.info("💡 **Mẹo sử dụng:**\n- Định dạng cột Excel: `Mã thẻ`, `Họ Tên`, `Ngày Sinh`.\n- Ngày sinh chấp nhận `DD/MM/YYYY` hoặc năm sinh `YYYY`.")
 
@@ -138,9 +80,9 @@ with tab1:
     if uploaded_file is not None:
         try:
             if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file, dtype=str)
+                df = pd.read_csv(uploaded_file, dtype={'Mã thẻ': str, 'MaThe': str})
             else:
-                df = pd.read_excel(uploaded_file, dtype=str)
+                df = pd.read_excel(uploaded_file, dtype={'Mã thẻ': str, 'MaThe': str})
                 
             st.success(f"📂 Đã nạp thành công file: **{uploaded_file.name}** ({len(df)} dòng dữ liệu)")
             
@@ -158,16 +100,15 @@ with tab1:
             with col3:
                 sel_ngay_sinh = st.selectbox("Cột Ngày/Năm Sinh", cols, index=cols.index(col_ngay_sinh) if col_ngay_sinh else (2 if len(cols)>2 else 0))
 
-            # Ensure Mã thẻ preserves leading zeros and pads numeric codes shorter than 10 digits
+            # Ensure Mã thẻ preserves leading zeros with zfill(10)
             if sel_ma_the in df.columns:
                 df[sel_ma_the] = df[sel_ma_the].fillna("").astype(str).str.strip()
-                df[sel_ma_the] = df[sel_ma_the].apply(lambda x: x.zfill(10) if x.isdigit() and len(x) < 10 else x)
+                df[sel_ma_the] = df[sel_ma_the].apply(lambda x: x.lstrip('0').zfill(10) if x.isdigit() else x)
 
             with st.expander("👀 Xem trước 5 dòng đầu tiên", expanded=False):
                 st.dataframe(df.head(), use_container_width=True)
 
             if st.button("🚀 Bắt Đầu Tra Cứu Hàng Loạt", type="primary", use_container_width=True):
-                # Prepare data list
                 records = []
                 for _, row in df.iterrows():
                     records.append({
@@ -229,7 +170,7 @@ with tab1:
                 st.download_button(
                     label="📥 Tải về Kết Quả (File Excel)",
                     data=output.getvalue(),
-                    file_name=f"KetQua_BHYT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    file_name=f"output_bhyt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
                 )
@@ -293,11 +234,8 @@ with tab3:
     - Ứng dụng tự động điều khiển trình duyệt Chromium chạy ngầm (Playwright).
     - Sử dụng mô hình AI OCR (`ddddocr`) để tự động giải Captcha hình ảnh của Cổng thông tin BHXH Việt Nam.
     - Cơ chế tự động thử lại khi Captcha bị nhiễu.
-
-    ### 3. Tải về file mẫu demo
     """)
     
-    # Create sample dataframe
     sample_df = pd.DataFrame([
         {"Mã thẻ": "1078014401", "Họ Tên": "NGUYỄN HỮU TIẾN", "Ngày Sinh": "30/06/1978"},
         {"Mã thẻ": "93099005270", "Họ Tên": "NGUYỄN TRÍ QUỐC", "Ngày Sinh": "12/09/1999"},
@@ -311,6 +249,6 @@ with tab3:
     st.download_button(
         label="📥 Tải về File Excel Mẫu Demo (.xlsx)",
         data=sample_output.getvalue(),
-        file_name="DanhSachMau_TraCuuBHYT.xlsx",
+        file_name="input.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

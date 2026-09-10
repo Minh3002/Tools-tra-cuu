@@ -10,22 +10,9 @@ class BHYTScraper:
     def __init__(self, headless=True, max_retries=3):
         self.headless = headless
         self.max_retries = max_retries
-        # Dùng ddddocr mặc định (beta=False)
+        # Dùng ddddocr mặc định
         self.ocr = ddddocr.DdddOcr(show_ad=False)
         self.url = "https://baohiemxahoi.gov.vn/tracuu/Pages/tra-cuu-thoi-han-su-dung-the-bhyt.aspx"
-
-    def _launch_browser(self, p):
-        """Khởi tạo trình duyệt Playwright chạy local ổn định."""
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        browser = p.chromium.launch(headless=self.headless)
-        context = browser.new_context(
-            user_agent=user_agent,
-            viewport={"width": 1280, "height": 800},
-            locale="vi-VN",
-            timezone_id="Asia/Ho_Chi_Minh"
-        )
-        page = context.new_page()
-        return browser, context, page
 
     def _format_input_data(self, record):
         # Format Mã thẻ
@@ -37,7 +24,7 @@ class BHYTScraper:
         else:
             ma_the = str(ma_the_raw).strip()
 
-        # Chuẩn hóa mã thẻ số (giữ nguyên độ dài 10 chữ số)
+        # Chuẩn hóa mã thẻ số (giữ đủ 10 chữ số)
         if ma_the.isdigit():
             ma_the = ma_the.lstrip('0').zfill(10)
 
@@ -67,7 +54,7 @@ class BHYTScraper:
         return ma_the, ho_ten, ngay_sinh
 
     def _solve_captcha(self, page):
-        """Cắt ảnh Captcha trực tiếp từ element #imgCaptcha trên trang và dùng ddddocr giải."""
+        """Cắt ảnh Captcha chuẩn từ element #imgCaptcha và dùng ddddocr mặc định (.strip().upper())."""
         try:
             captcha_selector = "#imgCaptcha"
             page.wait_for_selector(captcha_selector, state="visible", timeout=10000)
@@ -75,7 +62,7 @@ class BHYTScraper:
             img_bytes = captcha_element.screenshot()
             
             captcha_text = self.ocr.classification(img_bytes)
-            return captcha_text.strip()
+            return str(captcha_text).strip().upper()
         except Exception:
             return ""
 
@@ -103,7 +90,9 @@ class BHYTScraper:
         try:
             if page is None:
                 p_instance = sync_playwright().start()
-                browser_instance, context, page = self._launch_browser(p_instance)
+                browser_instance = p_instance.chromium.launch(headless=self.headless)
+                context = browser_instance.new_context()
+                page = context.new_page()
                 should_close = True
 
             page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
@@ -112,20 +101,17 @@ class BHYTScraper:
             captcha_success = False
 
             for attempt in range(1, self.max_retries + 1):
-                # Điền form + trigger sự kiện change + Tab để trang nhận đủ input
+                # Điền form + trigger change event
                 page.fill("#txtMaThe", ma_the)
                 page.locator("#txtMaThe").dispatch_event("change")
-                page.locator("#txtMaThe").focus()
                 page.keyboard.press("Tab")
 
                 page.fill("#txtHoTen", ho_ten)
                 page.locator("#txtHoTen").dispatch_event("change")
-                page.locator("#txtHoTen").focus()
                 page.keyboard.press("Tab")
 
                 page.fill("#txtNgaySinh", ngay_sinh)
                 page.locator("#txtNgaySinh").dispatch_event("change")
-                page.locator("#txtNgaySinh").focus()
                 page.keyboard.press("Tab")
 
                 captcha_text = self._solve_captcha(page)
@@ -137,13 +123,11 @@ class BHYTScraper:
 
                 page.fill("#tokenRecaptch", captcha_text)
                 page.locator("#tokenRecaptch").dispatch_event("change")
-                page.locator("#tokenRecaptch").focus()
                 page.keyboard.press("Tab")
 
                 page.click("#btnTraCuu")
                 page.wait_for_timeout(2500)
 
-                # Kiểm tra thông báo lỗi Captcha từ #messeger
                 err_msg = ""
                 if page.locator("#messeger").count() > 0:
                     err_msg = page.locator("#messeger").first.inner_text().strip()
@@ -154,7 +138,6 @@ class BHYTScraper:
                     page.wait_for_timeout(1000)
                     continue
 
-                # Kiểm tra khung kết quả #tcContainer
                 if page.locator("#tcContainer").count() > 0:
                     tc_text = page.locator("#tcContainer").first.inner_text().strip()
                     if tc_text:
@@ -187,7 +170,10 @@ class BHYTScraper:
     def scrape_batch(self, records_list, callback=None):
         results = []
         with sync_playwright() as p:
-            browser, context, page = self._launch_browser(p)
+            browser = p.chromium.launch(headless=self.headless)
+            context = browser.new_context()
+            page = context.new_page()
+
             total = len(records_list)
             for idx, record in enumerate(records_list):
                 res = self.scrape_single_record(record, page=page, close_browser=False)
