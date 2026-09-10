@@ -1,8 +1,21 @@
 import streamlit as st
 import pandas as pd
 import time
+import subprocess
+import sys
 from io import BytesIO
 from datetime import datetime
+
+# Tự động kiểm tra và cài đặt Playwright Chromium khi chạy trên Streamlit Cloud / Server
+@st.cache_resource
+def install_playwright_browsers():
+    try:
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+    except Exception as e:
+        print(f"Lỗi tự động cài đặt Playwright Chromium: {e}")
+
+install_playwright_browsers()
+
 from scraper import BHYTScraper
 
 # Page Configuration
