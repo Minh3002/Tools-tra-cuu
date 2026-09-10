@@ -4,15 +4,69 @@ import time
 import pandas as pd
 from datetime import datetime
 from playwright.sync_api import sync_playwright
+try:
+    from playwright_stealth.stealth import Stealth
+    HAS_STEALTH = True
+except Exception:
+    HAS_STEALTH = False
+
 import ddddocr
 
 class BHYTScraper:
     def __init__(self, headless=True, max_retries=3):
         self.headless = headless
         self.max_retries = max_retries
-        # 1. KHÔI PHỤC CAPTCHA OCR: Dùng ddddocr mặc định, KHÔNG dùng beta=True
         self.ocr = ddddocr.DdddOcr(show_ad=False)
         self.url = "https://baohiemxahoi.gov.vn/tracuu/Pages/tra-cuu-thoi-han-su-dung-the-bhyt.aspx"
+
+    def _launch_browser(self, p):
+        """1. CẤU HÌNH BROWSER LAUNCH: Bypass Anti-bot trên Cloud Linux với Chrome User-Agent, Viewport 1920x1080 & xóa navigator.webdriver."""
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-infobars",
+            "--window-size=1920,1080",
+            "--ignore-certificate-errors"
+        ]
+        
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+        
+        try:
+            browser = p.chromium.launch(headless=self.headless, channel="chrome", args=args)
+        except Exception:
+            browser = p.chromium.launch(headless=self.headless, args=args)
+            
+        context = browser.new_context(
+            user_agent=user_agent,
+            viewport={"width": 1920, "height": 1080},
+            locale="vi-VN",
+            timezone_id="Asia/Ho_Chi_Minh",
+            extra_http_headers={
+                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"'
+            }
+        )
+        
+        # Xóa thuộc tính navigator.webdriver chống phát hiện bot
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+        
+        page = context.new_page()
+        
+        if HAS_STEALTH:
+            try:
+                Stealth().apply_stealth_sync(page)
+            except Exception:
+                pass
+                
+        return browser, context, page
 
     def _format_input_data(self, record):
         # Format Mã thẻ
@@ -54,7 +108,7 @@ class BHYTScraper:
         return ma_the, ho_ten, ngay_sinh
 
     def _solve_captcha(self, page):
-        """1. Cắt trực tiếp khung element #imgCaptcha và dùng ddddocr mặc định."""
+        """Cắt trực tiếp khung element #imgCaptcha và dùng ddddocr mặc định."""
         try:
             captcha_selector = "#imgCaptcha"
             page.wait_for_selector(captcha_selector, state="visible", timeout=10000)
@@ -90,18 +144,28 @@ class BHYTScraper:
         try:
             if page is None:
                 p_instance = sync_playwright().start()
-                browser_instance = p_instance.chromium.launch(headless=self.headless)
-                context = browser_instance.new_context()
-                page = context.new_page()
+                browser_instance, context, page = self._launch_browser(p_instance)
                 should_close = True
 
             page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_selector("#txtMaThe", state="visible", timeout=15000)
+
+            # 2. KIỂM TRA RESPONSE & DEBUG: Chờ form #txtMaThe, nếu không thấy chụp ảnh màn hình debug_cloud.png
+            try:
+                page.wait_for_selector("#txtMaThe", state="visible", timeout=15000)
+            except Exception as e:
+                print(f"[DEBUG CLOUD] Không thể tải form tra cứu #txtMaThe: {e}")
+                try:
+                    page.screenshot(path="debug_cloud.png")
+                except Exception:
+                    pass
+                result_info["Trạng Thái"] = "Lỗi kết nối"
+                result_info["Nội Dung Kết Quả"] = "Không thể nạp form tra cứu từ Cổng BHXH (Trang bị chặn hoặc quá tải)."
+                return result_info
 
             captcha_success = False
 
             for attempt in range(1, self.max_retries + 1):
-                # 2. ĐẢM BẢO ĐIỀN FORM ĐÚNG SỰ KIỆN: Điền input + trigger change event + press Tab
+                # Điền form kèm trigger sự kiện (Press Tab sau khi fill)
                 page.fill("#txtMaThe", ma_the)
                 page.locator("#txtMaThe").dispatch_event("change")
                 page.locator("#txtMaThe").focus()
@@ -119,7 +183,6 @@ class BHYTScraper:
 
                 captcha_text = self._solve_captcha(page)
                 if not captcha_text:
-                    # 3. LOGIC RETRY NHẸ NHÀNG: Click đổi Captcha mới, chờ 1s rồi thử lại
                     if page.locator("#imgCaptcha").count() > 0:
                         page.locator("#imgCaptcha").first.click()
                     page.wait_for_timeout(1000)
@@ -133,13 +196,12 @@ class BHYTScraper:
                 page.click("#btnTraCuu")
                 page.wait_for_timeout(2500)
 
-                # 3. Kiểm tra thông báo lỗi Captcha từ #messeger
+                # Kiểm tra thông báo lỗi Captcha từ #messeger
                 err_msg = ""
                 if page.locator("#messeger").count() > 0:
                     err_msg = page.locator("#messeger").first.inner_text().strip()
 
                 if err_msg and any(k in err_msg.lower() for k in ["không hợp lệ", "không đúng", "mã xác"]):
-                    # Click đổi Captcha mới, chờ 1s
                     if page.locator("#imgCaptcha").count() > 0:
                         page.locator("#imgCaptcha").first.click()
                     page.wait_for_timeout(1000)
@@ -178,10 +240,7 @@ class BHYTScraper:
     def scrape_batch(self, records_list, callback=None):
         results = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
-            context = browser.new_context()
-            page = context.new_page()
-
+            browser, context, page = self._launch_browser(p)
             total = len(records_list)
             for idx, record in enumerate(records_list):
                 res = self.scrape_single_record(record, page=page, close_browser=False)
