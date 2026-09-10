@@ -80,9 +80,9 @@ with tab1:
     if uploaded_file is not None:
         try:
             if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file, dtype={'Mã thẻ': str, 'MaThe': str})
+                df = pd.read_csv(uploaded_file, dtype=str)
             else:
-                df = pd.read_excel(uploaded_file, dtype={'Mã thẻ': str, 'MaThe': str})
+                df = pd.read_excel(uploaded_file, dtype=str)
                 
             st.success(f"📂 Đã nạp thành công file: **{uploaded_file.name}** ({len(df)} dòng dữ liệu)")
             
@@ -100,10 +100,9 @@ with tab1:
             with col3:
                 sel_ngay_sinh = st.selectbox("Cột Ngày/Năm Sinh", cols, index=cols.index(col_ngay_sinh) if col_ngay_sinh else (2 if len(cols)>2 else 0))
 
-            # Ensure Mã thẻ preserves leading zeros with zfill(10)
+            # Ensure Mã thẻ preserves leading zeros as entered in Excel
             if sel_ma_the in df.columns:
-                df[sel_ma_the] = df[sel_ma_the].fillna("").astype(str).str.strip()
-                df[sel_ma_the] = df[sel_ma_the].apply(lambda x: x.lstrip('0').zfill(10) if x.isdigit() else x)
+                df[sel_ma_the] = df[sel_ma_the].fillna("").astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
             with st.expander("👀 Xem trước 5 dòng đầu tiên", expanded=False):
                 st.dataframe(df.head(), use_container_width=True)

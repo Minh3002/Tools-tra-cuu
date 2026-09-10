@@ -24,9 +24,9 @@ class BHYTScraper:
         else:
             ma_the = str(ma_the_raw).strip()
 
-        # Chuẩn hóa mã thẻ số (giữ đủ 10 chữ số)
-        if ma_the.isdigit():
-            ma_the = ma_the.lstrip('0').zfill(10)
+        # Làm sạch chuỗi mã thẻ và giữ nguyên các số 0 ở đầu người dùng nhập
+        import re
+        ma_the = re.sub(r'\.0$', '', ma_the)
 
         # Format Họ tên
         ho_ten_raw = record.get('Họ Tên', record.get('Họ và Tên', record.get('HoTen', '')))
