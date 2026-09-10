@@ -105,6 +105,27 @@ with st.sidebar:
     headless_mode = st.checkbox("Chạy ẩn trình duyệt (Headless)", value=True)
     
     st.divider()
+    st.subheader("🌐 Chia Sẻ Link Public (Ngrok)")
+    enable_ngrok = st.checkbox("Bật tạo Link Public Ngrok", value=False)
+    ngrok_token = st.text_input("Ngrok Authtoken (Tùy chọn)", type="password", help="Nhập Authtoken từ ngrok.com nếu cần")
+    
+    if enable_ngrok:
+        try:
+            from pyngrok import ngrok
+            if ngrok_token.strip():
+                ngrok.set_auth_token(ngrok_token.strip())
+            tunnels = ngrok.get_tunnels()
+            if not tunnels:
+                tunnel = ngrok.connect(8501, "http")
+                public_url = tunnel.public_url
+            else:
+                public_url = tunnels[0].public_url
+            st.success(f"🔗 **Link Public Ngrok:**\n[{public_url}]({public_url})")
+            st.caption("Gửi link trên cho người khác để họ dùng chung khi máy bạn đang bật!")
+        except Exception as e:
+            st.warning(f"Chưa thể bật Ngrok: {e}\n(Vui lòng kiểm tra lại Authtoken hoặc dùng script run_app.py)")
+
+    st.divider()
     st.info("💡 **Mẹo sử dụng:**\n- Định dạng cột Excel: `Mã thẻ`, `Họ Tên`, `Ngày Sinh`.\n- Ngày sinh chấp nhận `DD/MM/YYYY` hoặc năm sinh `YYYY`.")
 
 # Main Navigation Tabs

@@ -7,3 +7,4 @@ playwright-stealth>=2.0.0
 pillow>=10.0.0
 opencv-python>=4.8.0
 beautifulsoup4>=4.12.0
+pyngrok>=7.0.0
