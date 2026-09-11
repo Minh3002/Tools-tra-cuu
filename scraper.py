@@ -2,18 +2,37 @@ import os
 import sys
 import time
 import random
+import re
 import pandas as pd
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 import ddddocr
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(env_path):
+    load_dotenv(env_path)
+else:
+    load_dotenv()
 
 class BHYTScraper:
     def __init__(self, headless=True, max_retries=3):
         self.headless = headless
         self.max_retries = max_retries
-        # Dùng ddddocr mặc định
+        # Dùng ddddocr mặc định làm fallback
         self.ocr = ddddocr.DdddOcr(show_ad=False)
         self.url = "https://baohiemxahoi.gov.vn/tracuu/Pages/tra-cuu-thoi-han-su-dung-the-bhyt.aspx"
+
+        # Khởi tạo Gemini API Client nếu có GEMINI_API_KEY
+        self.gemini_client = None
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            try:
+                from google import genai
+                self.gemini_client = genai.Client(api_key=gemini_key)
+            except Exception as e:
+                print(f"Warning: Không thể khởi tạo Gemini Client: {e}")
 
     def _format_input_data(self, record):
         # Format Mã thẻ
@@ -26,7 +45,6 @@ class BHYTScraper:
             ma_the = str(ma_the_raw).strip()
 
         # Làm sạch chuỗi mã thẻ và giữ nguyên các số 0 ở đầu người dùng nhập
-        import re
         ma_the = re.sub(r'\.0$', '', ma_the)
 
         # Format Họ tên
@@ -55,13 +73,33 @@ class BHYTScraper:
         return ma_the, ho_ten, ngay_sinh
 
     def _solve_captcha(self, page):
-        """Cắt ảnh Captcha chuẩn từ element #imgCaptcha và dùng ddddocr mặc định (.strip().upper())."""
+        """Cắt ảnh Captcha từ #imgCaptcha và ưu tiên dùng Gemini AI (fallback ddddocr)."""
         try:
             captcha_selector = "#imgCaptcha"
             page.wait_for_selector(captcha_selector, state="visible", timeout=10000)
             captcha_element = page.locator(captcha_selector).first
             img_bytes = captcha_element.screenshot()
-            
+
+            # 1. Ưu tiên giải Captcha bằng Gemini AI
+            if self.gemini_client:
+                for model_name in ['gemini-3.6-flash', 'gemini-3.5-flash']:
+                    try:
+                        from google.genai import types
+                        prompt = "Read the 5-character CAPTCHA text in this image. Return ONLY the uppercase string without any spaces, extra punctuation, or formatting."
+                        response = self.gemini_client.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
+                                prompt
+                            ]
+                        )
+                        text = re.sub(r'[^A-ZA-Z0-9]', '', response.text).strip().upper()
+                        if text:
+                            return text
+                    except Exception:
+                        continue
+
+            # 2. Fallback sang ddddocr nếu Gemini không khả dụng hoặc lỗi
             captcha_text = self.ocr.classification(img_bytes)
             return str(captcha_text).strip().upper()
         except Exception:
